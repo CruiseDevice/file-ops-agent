@@ -9,7 +9,7 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 from typing_extensions import TypedDict
 
-from src.tools import editor, file_read, file_write
+from src.tools import editor, file_read, file_write, list_dir, mkdir
 
 SYSTEM_PROMPT = """You are a careful file-operations assistant that works inside a sandbox directory.
 
@@ -18,8 +18,47 @@ Rules:
 - Paths with directory traversal (../ or /../), system directories (/etc, /usr, /bin, /sbin, /var, /opt, /root), or sensitive folders (.ssh, .bashrc, .env) are rejected.
 - Read files before editing or overwriting whenever you need to preserve context.
 - Make targeted edits with str_replace; use insert_at_line when you need to add new lines.
+- Use list_dir to explore directories before reading unknown files.
+- Use mkdir to create directories before writing files that need them.
 - Stop and respond when the task is complete.
 """
+
+
+@tool
+def list_dir_tool(path: str = ".") -> str:
+    """
+    List files and directories inside a sandbox directory.
+
+    Args:
+        path: Sandbox-relative or absolute path to the directory to list. Default is the sandbox root (".").
+        The path is resolved inside ./sandbox; absolute paths are allowed only if they already
+        point under the sandbox, and paths that escape the sandbox or contain
+        traversal fragments are rejected.
+
+    Returns:
+        A newline-separated list of entries, each prefixed with "file: " or
+        "dir: ". Returns an error message starting with "Error:" if the path
+        is invalid, does not exist, or is not a directory.
+    """
+    return list_dir(path)
+
+
+@tool
+def mkdir_tool(path: str) -> str:
+    """
+    Create a directory inside the sandbox.
+
+    Args:
+        path: Sandbox-relative or absolute path where the directory should be created, e.g. "data/backups".
+        Intermediate directories are created automatically. The path is resolved inside ./sandbox; absolute
+        paths are allowed only if they already point under the sandbox, and paths that escape the sandbox
+        or contain traversal fragments are rejected.
+
+    Returns:
+        A success message, or an error message starting with "Error:" if the
+        path is invalid, escapes the sandbox, or points to an existing file.
+    """
+    return mkdir(path)
 
 
 @tool
@@ -127,7 +166,7 @@ def editor_tool(path: str, command: Literal["str_replace", "insert_at_line"], ol
     return editor(path, command, old_str, new_str, line)
 
 
-tools = [file_read_tool, file_write_tool, editor_tool]
+tools = [file_read_tool, file_write_tool, editor_tool, list_dir_tool, mkdir_tool]
 
 
 class AgentState(TypedDict):

@@ -16,7 +16,6 @@ def _contains_forbidden_path(path: str) -> str | None:
     return None
 
 
-
 def resolve_path(path: str) -> Path:
     """
     Resolve `path` to a real absolute path inside ./sandbox.
@@ -61,6 +60,7 @@ def _format_size(n: int) -> str:
     if n < 1024 * 1024:
         return f"{n / 1024:.1f} KB"
     return f"{n / (1024 * 1024):.1f} MB"
+
 
 def file_read(path: str, offset: int = 1, limit: int = 0, search: str = "") -> str:
     """
@@ -161,6 +161,57 @@ def file_write(path: str, content: str, mode: str = "overwrite") -> str:
         f.write(content)
 
     return f"Successfully {'appended to' if mode == 'append' else 'wrote'} {target}"
+
+
+def list_dir(path: str = ".") -> str:
+    """
+    List files and directories inside 'path' (sandbox-relative)
+    """
+    try:
+        target = resolve_path(path)
+    except ValueError as exc:
+        return f"Error: {exc}"
+
+    if not target.exists():
+        return f"Error: directory not found: {path}"
+
+    if not target.is_dir():
+        return f"Error: not a directory: {path}"
+
+    try:
+        entries = []
+        for item in sorted(target.iterdir()):
+            kind = "dir" if item.is_dir() else "file"
+            entries.append(f"{kind}: {item.name}")
+    except OSError as exc:
+        return f"Error: cannot list directory: {exc}"
+
+    if not entries:
+        return f"Directory '{path}' is empty"
+
+    return "\n".join(entries)
+
+
+def mkdir(path: str) -> str:
+    """
+    Create a directory (and any missing parents) inside the sandbox
+    """
+    try:
+        target = resolve_path(path)
+    except ValueError as exc:
+        return f"Error: {exc}"
+
+    if target.exists():
+        if target.is_dir():
+            return f"Directory already exists: {target}"
+        return f"Error: {path} is a file"
+
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return f"Error: cannot create directory: {exc}"
+
+    return f"Successfully created directory: {target}"
 
 
 # --------------------------------------------------------------------------- #
