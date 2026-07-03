@@ -2,7 +2,19 @@ import os
 import re
 from pathlib import Path
 
-from src.config import SANDBOX_ROOT
+from src.config import FORBIDDEN_PATTERNS, MAX_FILE_SIZE, SANDBOX_ROOT
+
+
+def _contains_forbidden_path(path: str) -> str | None:
+    """
+    Check if `path` (already expanded) matches any forbidden pattern.
+    Returns the matched pattern string for an error message, or None.
+    """
+    for pattern in FORBIDDEN_PATTERNS:
+        if pattern.search(path):
+            return pattern.pattern
+    return None
+
 
 
 def resolve_path(path: str) -> Path:
@@ -16,6 +28,15 @@ def resolve_path(path: str) -> Path:
     # Expand ~ and environment variables (e.g. $HOME) before resolving.
     expanded = os.path.expanduser(os.path.expandvars(path))
     p = Path(expanded)
+
+    # Defense in depth: reject known-bad patterns before normalization.
+    # We check both the raw requested form and the expanded form.
+    for candidate in (path, expanded, str(p)):
+        forbidden = _contains_forbidden_path(candidate)
+        if forbidden:
+            raise ValueError(
+                f"Path {path!r} is forbidden (matched pattern: {forbidden!r})"
+            )
 
     # Absolute paths are only allowed if they already live under the sandbox.
     if p.is_absolute():
@@ -34,9 +55,13 @@ def resolve_path(path: str) -> Path:
     return resolved
 
 
-# --------------------------------------------------------------------------- #
-# File read
-# --------------------------------------------------------------------------- #
+def _format_size(n: int) -> str:
+    if n < 1024:
+        return f"{n} bytes"
+    if n < 1024 * 1024:
+        return f"{n / 1024:.1f} KB"
+    return f"{n / (1024 * 1024):.1f} MB"
+
 def file_read(path: str, offset: int = 1, limit: int = 0, search: str = "") -> str:
     """
     Read from `path` inside the sandbox.
@@ -57,6 +82,13 @@ def file_read(path: str, offset: int = 1, limit: int = 0, search: str = "") -> s
         return f"Error: file not found: {path}"
     if not target.is_file():
         return f"Error: not a file: {path}"
+
+    file_size = target.stat().st_size
+    if file_size > MAX_FILE_SIZE:
+        return (
+            f"Error: file is too large ({_format_size(file_size)}); "
+            f"max allowed is {_format_size(MAX_FILE_SIZE)}"
+        )
 
     text = target.read_text(encoding="utf-8", errors="replace")
     lines = text.splitlines()
@@ -97,6 +129,19 @@ def file_write(path: str, content: str, mode: str = "overwrite") -> str:
 
     if target.exists() and target.is_dir():
         return f"Error: {path} is a directory"
+
+    new_bytes = len(content.encode("utf-8"))
+    existing_bytes = target.stat().st_size if target.exists() else 0
+    if mode == "overwrite" and new_bytes > MAX_FILE_SIZE:
+        return (
+            f"Error: content is too large ({_format_size(new_bytes)}); "
+            f"max allowed is {_format_size(MAX_FILE_SIZE)}"
+        )
+    if mode == "append" and existing_bytes + new_bytes > MAX_FILE_SIZE:
+        return (
+            f"Error: append would exceed max file size "
+            f"({_format_size(existing_bytes + new_bytes)} > {_format_size(MAX_FILE_SIZE)})"
+        )
 
     if mode not in ("overwrite", "append"):
         return f"Error: invalid mode {mode!r}; use 'overwrite' or 'append'"
@@ -155,6 +200,12 @@ def editor(
 
         # First occurrence only
         new_text = text.replace(old_str, new_str, 1)
+        new_size = len(new_text.encode("utf-8"))
+        if new_size > MAX_FILE_SIZE:
+            return (
+                f"Error: replacement would exceed max file size "
+                f"({_format_size(new_size)} > {_format_size(MAX_FILE_SIZE)})"
+            )
         target.write_text(new_text, encoding="utf-8")
         return f"Successfully replaced text in {target}"
 
@@ -170,6 +221,13 @@ def editor(
         new_text = "\n".join(lines)
         if trailing_newline:
             new_text += "\n"
+
+        new_size = len(new_text.encode("utf-8"))
+        if new_size > MAX_FILE_SIZE:
+            return (
+                f"Error: insertion would exceed max file size "
+                f"({_format_size(new_size)} > {_format_size(MAX_FILE_SIZE)})"
+            )
 
         target.write_text(new_text, encoding="utf-8")
         if line <= 0:

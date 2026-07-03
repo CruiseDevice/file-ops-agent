@@ -11,8 +11,14 @@ from typing_extensions import TypedDict
 
 from src.tools import editor, file_read, file_write
 
-SYSTEM_PROMPT = """You are a careful file-operations assistant that works
-inside a sandbox directory.
+SYSTEM_PROMPT = """You are a careful file-operations assistant that works inside a sandbox directory.
+
+Rules:
+- All file paths are resolved inside ./sandbox. Absolute paths only work if they already point under that directory.
+- Paths with directory traversal (../ or /../), system directories (/etc, /usr, /bin, /sbin, /var, /opt, /root), or sensitive folders (.ssh, .bashrc, .env) are rejected.
+- Read files before editing or overwriting whenever you need to preserve context.
+- Make targeted edits with str_replace; use insert_at_line when you need to add new lines.
+- Stop and respond when the task is complete.
 """
 
 
@@ -45,7 +51,8 @@ def file_read_tool(path: str, offset: int = 1, limit: int = 0, search: str = "")
     Returns:
         A string containing the requested lines, joined with newline characters.
         Returns an error message starting with "Error:" if the path is invalid,
-        escapes the sandbox, points to a directory, or the file does not exist.
+        escapes the sandbox, points to a directory, the file does not exist, or
+        the file is larger than the configured maximum size.
     """
     return file_read(path, offset, limit, search)
 
@@ -65,11 +72,13 @@ def file_write_tool(path: str, content: str, mode: Literal["overwrite", "append"
             under the sandbox, and paths that escape the sandbox are rejected.
             Intermediate directories are created automatically.
         content: The text to write into the file. Should be a complete, valid
-            string for the target file type.
+            string for the target file type. Must not exceed the configured
+            maximum file size.
         mode: Write mode. Must be one of:
             - "overwrite" (default): Replace the entire file with `content`.
             - "append": Add `content` to the end of the file. If the existing
               file does not end with a newline, one is inserted before `content`.
+              The resulting file must not exceed the configured maximum size.
 
     Returns:
         A status message indicating success, or an error message starting with
@@ -112,8 +121,8 @@ def editor_tool(path: str, command: Literal["str_replace", "insert_at_line"], ol
     Returns:
         A status message describing the result of the edit, or an error message
         starting with "Error:" if the path is invalid, the file is missing, the
-            command is unknown, the target text is not found, or the line number is
-            out of range.
+        command is unknown, the target text is not found, or the line number is
+        out of range.
     """
     return editor(path, command, old_str, new_str, line)
 

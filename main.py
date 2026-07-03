@@ -1,22 +1,37 @@
 import argparse
 import sys
+import time
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from src.agent import SYSTEM_PROMPT, graph
+from src.logger import log_run
 
 
 def run_agent(query: str, verbose: bool = False) -> str:
     messages = [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=query)]
-    result = graph.invoke(
-        {"messages": messages},
-        config={"recursion_limit": 10},
-    )
+    start = time.perf_counter()
+    error = None
+    final_messages = messages
+    try:
+        result = graph.invoke(
+            {"messages": messages},
+            config={"recursion_limit": 10},
+        )
+        final_messages = result["messages"]
+        final_response = final_messages[-1].content
+    except Exception as e:
+        error = f"{type(e).__name__}: {e}"
+        final_response = f"Error: {error}"
+    finally:
+        latency = time.perf_counter() - start
+        log_file = log_run(final_messages, final_response, latency, error)
 
-    if verbose:
-        _print_trace(result["messages"])
+        if verbose:
+            print(f"Run logged to: {log_file}")
+            _print_trace(final_messages)
 
-    return result["messages"][-1].content
+    return final_response
 
 
 def _print_trace(messages):
@@ -29,6 +44,9 @@ def _print_trace(messages):
             if getattr(message, "tool_calls", None):
                 for tc in message.tool_calls:
                     print(f"Tool call: {tc.get('name')}({tc.get('args')})")
+
+            if message.content:
+                print(f"Agent: {message.content}")
 
         elif message.type == "tool":
             snippet = message.content[:300]
@@ -45,9 +63,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.query:
         query = " ".join(args.query)
-        result = run_agent(query, verbose=args.verbose)
-        if not args.verbose:
-            print(result)
+        print(run_agent(query, verbose=args.verbose))
         return 0
 
     print("File-ops agent. Type 'exit' or 'quit' to leave")
