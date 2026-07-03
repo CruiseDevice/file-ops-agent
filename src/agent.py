@@ -1,8 +1,19 @@
-from typing import Literal
+import os
+from typing import Annotated, Literal
 
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
+from langchain_openai import ChatOpenAI
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode, tools_condition
+from typing_extensions import TypedDict
 
 from src.tools import editor, file_read, file_write
+
+SYSTEM_PROMPT = """You are a careful file-operations assistant that works
+inside a sandbox directory.
+"""
 
 
 @tool
@@ -50,9 +61,9 @@ def file_write_tool(path: str, content: str, mode: Literal["overwrite", "append"
     Args:
         path: Sandbox-relative or absolute path where the file should be written,
             e.g. "src/utils.py" or "data/output.json". The path is resolved
-            inside ./sandbox; absolute paths are allowed only if they already
-            point under the sandbox, and paths that escape the sandbox are
-            rejected. Intermediate directories are created automatically.
+            inside ./sandbox; absolute paths are allowed only if they already point
+            under the sandbox, and paths that escape the sandbox are rejected.
+            Intermediate directories are created automatically.
         content: The text to write into the file. Should be a complete, valid
             string for the target file type.
         mode: Write mode. Must be one of:
@@ -101,13 +112,41 @@ def editor_tool(path: str, command: Literal["str_replace", "insert_at_line"], ol
     Returns:
         A status message describing the result of the edit, or an error message
         starting with "Error:" if the path is invalid, the file is missing, the
-        command is unknown, the target text is not found, or the line number is
-        out of range.
+            command is unknown, the target text is not found, or the line number is
+            out of range.
     """
     return editor(path, command, old_str, new_str, line)
 
 
 tools = [file_read_tool, file_write_tool, editor_tool]
+
+
+class AgentState(TypedDict):
+    messages: Annotated[list, add_messages]
+
+
+llm = ChatOpenAI(
+    model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+    temperature=0,
+)
+llm_with_tools = llm.bind_tools(tools)
+
+def agent_node(state: AgentState):
+    response = llm_with_tools.invoke(state["messages"])
+    return {
+        "messages": [response]
+    }
+
+
+tool_node = ToolNode(tools)
+graph_builder = StateGraph(AgentState)
+graph_builder.add_node("agent", agent_node)
+graph_builder.add_node("tools", tool_node)
+graph_builder.add_edge(START, "agent")
+graph_builder.add_conditional_edges("agent", tools_condition)
+graph_builder.add_edge("tools", "agent")
+
+graph = graph_builder.compile()
 
 
 if __name__ == "__main__":

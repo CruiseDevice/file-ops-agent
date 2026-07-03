@@ -1,0 +1,13 @@
+# Minimal reproducible dependency set for the file-ops agent.
+# Exact versions are pinned to match the environment where the graph was built.
+
+langgraph==1.0.2
+langgraph-prebuilt==1.0.2
+langchain==1.0.5
+langchain-core==1.4.8
+langchain-openai==1.0.2
+openai==2.44.0
+
+python-dotenv==1.2.1
+
+pydantic==2.13.4

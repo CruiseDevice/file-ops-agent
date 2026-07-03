@@ -1,56 +1,71 @@
 import argparse
-import re
 import sys
 
-from src.config import SANDBOX_ROOT
-from src.tools import editor, file_read, file_write, resolve_path
+from langchain_core.messages import HumanMessage, SystemMessage
+
+from src.agent import SYSTEM_PROMPT, graph
+
+
+def run_agent(query: str, verbose: bool = False) -> str:
+    messages = [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=query)]
+    result = graph.invoke(
+        {"messages": messages},
+        config={"recursion_limit": 10},
+    )
+
+    if verbose:
+        _print_trace(result["messages"])
+
+    return result["messages"][-1].content
+
+
+def _print_trace(messages):
+    for message in messages:
+        if message.type == "system":
+            continue
+        if message.type == "human":
+            print(f"User: {message.content}")
+        elif message.type == "ai":
+            if getattr(message, "tool_calls", None):
+                for tc in message.tool_calls:
+                    print(f"Tool call: {tc.get('name')}({tc.get('args')})")
+
+        elif message.type == "tool":
+            snippet = message.content[:300]
+            suffix = "..." if len(message.content) > 300 else ""
+            print(f"Tool result: {snippet}{suffix}")
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Sandbox file tools")
-    sub = parser.add_subparsers(dest="command", required=True)
-
-    # read
-    p_read = sub.add_parser("read", help="Read a sandbox file")
-    p_read.add_argument("path")
-    p_read.add_argument("--offset", type=int, default=1)
-    p_read.add_argument("--limit", type=int, default=0)
-    p_read.add_argument("--search", default="")
-
-    # write
-    p_write = sub.add_parser("write", help="Write to a sandbox file")
-    p_write.add_argument("path")
-    p_write.add_argument("--content", required=True)
-    p_write.add_argument("--mode", choices=["overwrite", "append"], default="overwrite")
-
-    # edit
-    p_edit = sub.add_parser("edit", help="Edit a sandbox file")
-    p_edit.add_argument("path")
-    p_edit.add_argument("edit_command", choices=["str_replace", "insert_at_line"])
-    p_edit.add_argument("--old-str", default="")
-    p_edit.add_argument("--new-str", required=True)
-    p_edit.add_argument("--line", type=int, default=0)
+    parser = argparse.ArgumentParser(description="Sandbox file-ops agent")
+    parser.add_argument("query", nargs="*", help="Single query to run (omit for REPL)")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Print tool-call trace")
 
     args = parser.parse_args(argv)
 
-    if args.command == "read":
-        result = file_read(args.path, args.offset, args.limit, args.search)
+    if args.query:
+        query = " ".join(args.query)
+        result = run_agent(query, verbose=args.verbose)
+        if not args.verbose:
+            print(result)
+        return 0
 
-    elif args.command == "write":
-        result = file_write(args.path, args.content, args.mode)
+    print("File-ops agent. Type 'exit' or 'quit' to leave")
+    while True:
+        try:
+            query = input("> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return 0
 
-    elif args.command == "edit":
-        result = editor(
-            args.path,
-            args.edit_command,
-            args.old_str,
-            args.new_str,
-            args.line,
-        )
+        if query.lower() in {"exit", "quit"}:
+            break
+        if not query:
+            continue
 
-    print(result)
+        print(run_agent(query, verbose=args.verbose))
+
     return 0
-
-
+    
 if __name__ == "__main__":
     sys.exit(main())
